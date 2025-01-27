@@ -10,6 +10,7 @@ def view_data_page():
     engine = create_engine(
         f"postgresql://{st.secrets['DB_USER']}:{st.secrets['DB_PASSWORD']}@"
         f"{st.secrets['DB_HOST']}:{st.secrets['DB_PORT']}/{st.secrets['DB_NAME']}"
+        "?sslmode=require"
     )
     
     try:

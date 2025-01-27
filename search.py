@@ -8,7 +8,8 @@ def get_db_connection():
         user=st.secrets["DB_USER"],
         password=st.secrets["DB_PASSWORD"],
         host=st.secrets["DB_HOST"],
-        port=int(st.secrets["DB_PORT"])
+        port=st.secrets["DB_PORT"],
+        sslmode="require"
     )
 
 def search_page():
