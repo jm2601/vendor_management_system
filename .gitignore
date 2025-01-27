@@ -2,3 +2,4 @@
 __pycache__
 init_vendor_csv.csv
 approved_vendor_data.csv
+.streamlit/secrets.toml

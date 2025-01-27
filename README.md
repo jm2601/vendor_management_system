@@ -50,14 +50,16 @@ A robust Streamlit application designed to streamline vendor and subcontractor m
    CREATE DATABASE vendor_db;
    ```
 
-4. Create `.env` file in the project root:
+4. For local development, create secrets file:
 
-   ```env
-   DB_NAME=vendor_db
-   DB_USER=postgres
-   DB_PASSWORD=your_password
-   DB_HOST=localhost
-   DB_PORT=5432
+   ```bash
+   mkdir -p .streamlit
+   echo "[secrets]" > .streamlit/secrets.toml
+   echo 'DB_NAME = "vendor_db"' >> .streamlit/secrets.toml
+   echo 'DB_USER = "postgres"' >> .streamlit/secrets.toml
+   echo 'DB_PASSWORD = "your_password"' >> .streamlit/secrets.toml
+   echo 'DB_HOST = "localhost"' >> .streamlit/secrets.toml
+   echo 'DB_PORT = "5432"' >> .streamlit/secrets.toml
    ```
 
 5. Launch the application:
@@ -143,6 +145,20 @@ The application implements comprehensive error handling for:
 - Missing certificates
 - Expired certifications
 - Processing failures
+
+### Deployment to Streamlit Cloud
+
+1. Create a `secrets.toml` in Streamlit Cloud through app settings
+
+2. Add your database credentials:
+
+```toml
+   DB_NAME = "vendor_db"
+   DB_USER = "postgres"
+   DB_PASSWORD = "your_password"
+   DB_HOST = "your-database-host"
+   DB_PORT = "5432"`
+```
 
 ## 🚨 Common Issues
 

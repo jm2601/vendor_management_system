@@ -1,18 +1,14 @@
 import streamlit as st
 import psycopg2
 from fuzzywuzzy import process
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
 
 def get_db_connection():
     return psycopg2.connect(
-        dbname=os.getenv('DB_NAME'),
-        user=os.getenv('DB_USER'),
-        password=os.getenv('DB_PASSWORD'),
-        host=os.getenv('DB_HOST'),
-        port=os.getenv('DB_PORT')
+        dbname=st.secrets["DB_NAME"],
+        user=st.secrets["DB_USER"],
+        password=st.secrets["DB_PASSWORD"],
+        host=st.secrets["DB_HOST"],
+        port=int(st.secrets["DB_PORT"])
     )
 
 def search_page():
