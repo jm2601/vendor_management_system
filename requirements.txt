@@ -1,6 +1,6 @@
 streamlit
 pandas
-psycopg2
+psycopg2-binary
 python-dotenv
 fuzzywuzzy
 sqlalchemy
