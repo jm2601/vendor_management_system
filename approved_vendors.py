@@ -9,9 +9,12 @@ vendor_type_mapping = {
     'REG VENDOR': 1,
     'SUBCONTRACTOR': 2,
     'ARCHITECT': 3,
+    'LENDER': 4,
     'Supplier': 5,
     'ACCTG/LEGAL/CONSULTING': 6,
-    'EQUIPMENT RENT': 7
+    'EQUIPMENT RENT': 7,
+    'INSURANCE': 8,
+    'FUEL': 9
 }
 
 # List of allowed certificates (case-insensitive matching)

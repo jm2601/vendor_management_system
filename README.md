@@ -1,57 +1,161 @@
 # Vendor Management System
 
-A Streamlit application for managing vendor approvals and certifications.
+A robust Streamlit application designed to streamline vendor and subcontractor management, focusing on approval status tracking and certification management.
 
-## Setup
+## 🌟 Features
 
-1. Clone the repository
-2. Install requirements:
+- **Smart Search**
+  - Fuzzy search functionality for vendor lookup
+  - Intelligent matching with 70% similarity threshold
+  - Real-time results filtering
+
+- **Data Management**
+  - Bulk data import via CSV upload
+  - Automated certificate validation
+  - Expiration date tracking
+  - Certificate status monitoring
+
+- **Visual Interface**
+  - Clean, intuitive user interface
+  - Certificate status indicators
+  - Expiration warnings
+  - Comprehensive vendor details view
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.8+
+- PostgreSQL 12+
+- pip (Python package manager)
+
+### Installation
+
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/yourusername/vendor-management-system.git
+   cd vendor-management-system
+   ```
+
+2. Install required packages:
+
    ```bash
    pip install -r requirements.txt
-3. Create a `.env` file with PostgreSQL credentials:
+   ```
 
-```
-DB_NAME=vendor_db
-DB_USER=postgres
-DB_PASSWORD=your_password
-DB_HOST=localhost
-DB_PORT=5432
-```
-4. Set up PostgreSQL database:
-    ```bash
+3. Create PostgreSQL database:
+
+   ```sql
    CREATE DATABASE vendor_db;
-5. Run the app:
-    ```bash
-    streamlit run app.py
+   ```
 
-**Features**
-- 🔍 Fuzzy search for vendors
+4. Create `.env` file in the project root:
 
-- 📤 CSV upload with processing
+   ```env
+   DB_NAME=vendor_db
+   DB_USER=postgres
+   DB_PASSWORD=your_password
+   DB_HOST=localhost
+   DB_PORT=5432
+   ```
 
-- 📊 Data visualization
+5. Launch the application:
 
-- PostgreSQL database integration
+   ```bash
+   streamlit run app.py
+   ```
 
+## 💻 Technical Details
 
-**Key Implementation Notes:**
+### Database Schema
 
-1. **Database Setup:**
-- Create PostgreSQL database named `vendor_db`
-- Table structure matches the processed CSV format
+The system uses PostgreSQL with the following main table structure:
 
-2. **Fuzzy Search:**
-- Uses `fuzzywuzzy` for approximate string matching
-- Threshold set to 70% match score
+```sql
+CREATE TABLE vendors (
+    vendor_name TEXT PRIMARY KEY,
+    certificate TEXT[],
+    expires DATE,
+    vendor_type INTEGER,
+    contact TEXT,
+    phone TEXT,
+    certs_expired TEXT[],
+    approved BOOLEAN,
+    soon_to_expire INTEGER
+);
+```
 
-3. **Security:**
-- Database credentials stored in `.env` file
-- Uses parameterized SQL queries to prevent injection
+### Certificate Types
 
-4. **Error Handling:**
-- Graceful handling of missing data
-- Database connection cleanup
+The system tracks various certificates including:
 
-5. **Preprocessing:**
-- Modified `approved_vendors.py` needs to return processed DataFrame
-- Ensure date formatting matches PostgreSQL requirements
+- Workers Compensation Insurance
+- General Liability Insurance
+- Auto Liability Insurance
+- Umbrella Liability
+- Contractors License
+- DIR Registration
+- Equipment Floater
+
+### Vendor Types
+
+Vendors are categorized as:
+
+0. None
+1. Regular Vendor
+2. Subcontractor
+3. Architect
+4. Lender
+5. Supplier
+6. Accounting/Legal/Consulting
+7. Equipment Rental
+8. Insurance
+9. Fuel
+
+## 🔒 Security Features
+
+- Environment variable-based configuration
+- Parameterized SQL queries for injection prevention
+- Secure database connection handling
+- Input validation and sanitization
+
+## 🛠 Development
+
+### Project Structure
+
+```
+vendor-management-system/
+├── app.py              # Main application entry
+├── search.py          # Search functionality
+├── upload.py          # Data upload handling
+├── approved_vendors.py # Vendor processing logic
+├── requirements.txt    # Dependencies
+└── .env               # Configuration
+```
+
+### Error Handling
+
+The application implements comprehensive error handling for:
+
+- Database connection issues
+- Invalid data formats
+- Missing certificates
+- Expired certifications
+- Processing failures
+
+## 🚨 Common Issues
+
+1. **Database Connection Errors**
+   - Verify PostgreSQL is running
+   - Check credentials in `.env`
+   - Ensure database exists
+
+2. **CSV Upload Issues**
+   - Verify CSV format matches expected structure
+   - Check for special characters in headers
+   - Ensure dates are in correct format (MM/DD/YYYY)
+
+## 🤝 Support
+
+For support, please open an issue in the GitHub repository or contact the development team.
