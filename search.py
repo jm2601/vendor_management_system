@@ -27,7 +27,7 @@ def search_page():
         all_vendors = [row[0] for row in cursor.fetchall()]
         
         # Fuzzy match with threshold
-        matched_vendors = process.extractBests(search_term, all_vendors, score_cutoff=70)
+        matched_vendors = process.extractBests(search_term, all_vendors, score_cutoff=60)
         
         if matched_vendors:
             selected_vendor = st.selectbox("Select vendor:", [v[0] for v in matched_vendors])
