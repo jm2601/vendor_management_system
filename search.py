@@ -23,7 +23,7 @@ def search_page():
         cursor = conn.cursor()
         
         # Get all vendor names for fuzzy matching
-        cursor.execute("SELECT vendor_name FROM vendors")
+        cursor.execute("SELECT DISTINCT vendor_name FROM vendors")
         all_vendors = [row[0] for row in cursor.fetchall()]
         
         # Fuzzy match with threshold
@@ -34,8 +34,12 @@ def search_page():
             
             # Get vendor details
             cursor.execute("""
-                SELECT * FROM vendors 
+                SELECT vendor_name, array_agg(certificate) AS certificates, 
+                       array_agg(expires ORDER BY expires ASC) AS expirations, 
+                       approved, contact, phone, soon_to_expire
+                FROM vendors 
                 WHERE vendor_name = %s
+                GROUP BY vendor_name, approved, contact, phone, soon_to_expire
             """, (selected_vendor,))
             vendor_data = cursor.fetchone()
             
@@ -43,6 +47,27 @@ def search_page():
             if vendor_data:
                 cols = [desc[0] for desc in cursor.description]
                 vendor_dict = dict(zip(cols, vendor_data))
+                
+                # Extract soonest expiring certificate
+                certificates = vendor_dict.get('certificates', [])
+                expiration_dates = vendor_dict.get('expirations', [])
+                
+                if certificates and expiration_dates:
+                    # Flatten any nested lists
+                    certificates = [item for sublist in certificates for item in (sublist if isinstance(sublist, list) else [sublist])]
+                    expiration_dates = [item for sublist in expiration_dates for item in (sublist if isinstance(sublist, list) else [sublist])]
+                    
+                    cert_expirations = list(zip(certificates, expiration_dates))
+                    cert_expirations = [(cert, exp) for cert, exp in cert_expirations if exp is not None]
+                    cert_expirations.sort(key=lambda x: x[1])  # Sort by expiration date
+                    
+                    if cert_expirations:
+                        soonest_date = cert_expirations[0][1]
+                        soonest_certs = [cert for cert, exp in cert_expirations if exp == soonest_date]
+                    else:
+                        soonest_date, soonest_certs = None, []
+                else:
+                    soonest_date, soonest_certs = None, []
                 
                 # Main expandable section for the vendor
                 with st.expander(f"{vendor_dict['vendor_name']}", expanded=True):
@@ -62,26 +87,18 @@ def search_page():
                     st.write("Current Certificates:")
                     
                     # Display current certificates
-                    current_certs = vendor_dict.get('certificate', '[]')
-                    if current_certs and current_certs != '{}':
-                        st.code(current_certs)
+                    if certificates:
+                        st.code(certificates)
                     else:
-                        st.write("[]")
-                    
-                    # Display expired certificates
-                    st.error("Expired Certificates:")
-                    expired_certs = vendor_dict.get('certs_expired', '[]')
-                    if expired_certs and expired_certs != '{}':
-                        st.code(expired_certs)
+                        st.write("No valid certificates.")
                     
                     # Expiration Section
                     st.subheader("Expiration")
-                    expiration = vendor_dict.get('expires')
-                    st.write(f"Expires: {expiration if expiration else 'No Expiration Date'}")
-                    
-                    # Show warning for soon to expire
-                    if vendor_dict.get('soon_to_expire'):
-                        st.warning(f"Certificate expires in {vendor_dict['soon_to_expire']} days")
+                    if soonest_date:
+                        st.write(f"**Earliest Expiring Certificate(s) on {soonest_date}:**")
+                        st.write("\n".join(map(str, soonest_certs)))
+                    else:
+                        st.write("No certificates nearing expiration.")
         else:
             st.warning("No matching vendors found")
         
