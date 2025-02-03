@@ -1,6 +1,17 @@
 import streamlit as st
 import psycopg2
 from fuzzywuzzy import process
+from datetime import date
+
+def flatten_list(nested):
+    """Flattens a list by one level."""
+    flat = []
+    for item in nested:
+        if isinstance(item, list):
+            flat.extend(item)
+        else:
+            flat.append(item)
+    return flat
 
 def get_db_connection():
     return psycopg2.connect(
@@ -15,7 +26,6 @@ def get_db_connection():
 def search_page():
     st.title("Vendor Search")
     
-    # Search input
     search_term = st.text_input("Search Vendor Name", placeholder="Start typing vendor name...")
     
     if search_term:
@@ -26,77 +36,74 @@ def search_page():
         cursor.execute("SELECT DISTINCT vendor_name FROM vendors")
         all_vendors = [row[0] for row in cursor.fetchall()]
         
-        # Fuzzy match with threshold
         matched_vendors = process.extractBests(search_term, all_vendors, score_cutoff=60)
         
         if matched_vendors:
             selected_vendor = st.selectbox("Select vendor:", [v[0] for v in matched_vendors])
             
-            # Get vendor details
             cursor.execute("""
-                SELECT vendor_name, array_agg(certificate) AS certificates, 
-                       array_agg(expires ORDER BY expires ASC) AS expirations, 
-                       approved, contact, phone, soon_to_expire
+                SELECT vendor_name, 
+                       certificate, 
+                       expirations_all,
+                       approved, contact, phone, soon_to_expire,
+                       certs_expired
                 FROM vendors 
                 WHERE vendor_name = %s
-                GROUP BY vendor_name, approved, contact, phone, soon_to_expire
             """, (selected_vendor,))
             vendor_data = cursor.fetchone()
             
-            # Display results
             if vendor_data:
                 cols = [desc[0] for desc in cursor.description]
                 vendor_dict = dict(zip(cols, vendor_data))
                 
-                # Extract soonest expiring certificate
-                certificates = vendor_dict.get('certificates', [])
-                expiration_dates = vendor_dict.get('expirations', [])
+                # Flatten the certificate and expiration arrays
+                flat_certificates = flatten_list(vendor_dict.get("certificate", []))
+                flat_expirations = flatten_list(vendor_dict.get("expirations_all", []))
                 
-                if certificates and expiration_dates:
-                    # Flatten any nested lists
-                    certificates = [item for sublist in certificates for item in (sublist if isinstance(sublist, list) else [sublist])]
-                    expiration_dates = [item for sublist in expiration_dates for item in (sublist if isinstance(sublist, list) else [sublist])]
-                    
-                    cert_expirations = list(zip(certificates, expiration_dates))
-                    cert_expirations = [(cert, exp) for cert, exp in cert_expirations if exp is not None]
-                    cert_expirations.sort(key=lambda x: x[1])  # Sort by expiration date
-                    
-                    if cert_expirations:
-                        soonest_date = cert_expirations[0][1]
-                        soonest_certs = [cert for cert, exp in cert_expirations if exp == soonest_date]
-                    else:
-                        soonest_date, soonest_certs = None, []
+                # Pair each certificate with its corresponding expiration date
+                cert_exp_pairs = list(zip(flat_certificates, flat_expirations))
+                if cert_exp_pairs:
+                    cert_exp_pairs.sort(key=lambda x: x[1])
+                    soonest_date = cert_exp_pairs[0][1]
+                    # Only include those certificates whose expiration equals the soonest date
+                    soonest_certs = [cert for cert, exp in cert_exp_pairs if exp == soonest_date]
                 else:
                     soonest_date, soonest_certs = None, []
                 
-                # Main expandable section for the vendor
+                days_left = (soonest_date - date.today()).days if soonest_date else None
+                
+                # Flatten expired certificates
+                flat_expired = flatten_list(vendor_dict.get("certs_expired", []))
+                
                 with st.expander(f"{vendor_dict['vendor_name']}", expanded=True):
-                    # Approval Status
                     if vendor_dict['approved']:
                         st.success("Vendor is Approved ✅")
                     else:
                         st.error("Vendor is Not Approved ❌")
                     
-                    # Contact Details Section
                     st.subheader("Contact Details")
                     st.write(f"Contact: {vendor_dict.get('contact', 'N/A')}")
                     st.write(f"Phone: {vendor_dict.get('phone', 'N/A')}")
                     
-                    # Certificates Section
                     st.subheader("Certificates")
                     st.write("Current Certificates:")
-                    
-                    # Display current certificates
-                    if certificates:
-                        st.code(certificates)
+                    if flat_certificates:
+                        st.code(flat_certificates)
                     else:
                         st.write("No valid certificates.")
                     
-                    # Expiration Section
+                    st.write("Expired Certificates:")
+                    if flat_expired:
+                        st.code(flat_expired)
+                    else:
+                        st.write("No expired certificates.")
+                    
                     st.subheader("Expiration")
                     if soonest_date:
                         st.write(f"**Earliest Expiring Certificate(s) on {soonest_date}:**")
-                        st.write("\n".join(map(str, soonest_certs)))
+                        st.write(soonest_certs)
+                        if days_left is not None and 0 <= days_left <= 30:
+                            st.write(f"Certificate expires in {days_left} days")
                     else:
                         st.write("No certificates nearing expiration.")
         else:
