@@ -13,13 +13,13 @@ st.set_page_config(
 )
 
 # Hide the default sidebar completely
-st.markdown("""
-    <style>
-        section[data-testid="stSidebar"] {
-            display: none;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+# st.markdown("""
+#    <style>
+#        section[data-testid="stSidebar"] {
+#            display: none;
+#        }
+#    </style>
+#    """, unsafe_allow_html=True)
 
 # Horizontal navigation buttons
 def create_horizontal_nav():
