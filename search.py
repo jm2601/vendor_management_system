@@ -114,7 +114,6 @@ full_trade_list = [
 ]
 
 # Mapping for Division-specific Trade options.
-# For now, only "01 - General Conditions" is given as an example.
 trade_mapping = {
     "01 - General Conditions": [
         "Surveying/Staking",

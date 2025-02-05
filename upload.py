@@ -145,6 +145,9 @@ def upload_vendor_details_page():
                     'CA Lic.': 'ca_license',
                     'DIR No.': 'dir_number'
                 })
+                # Replace empty strings with NA and drop rows that are completely NA
+                df = df.replace(r'^\s*$', pd.NA, regex=True).dropna(how='all')
+
                 conn = get_db_connection()
                 cursor = conn.cursor()
                 cursor.execute("TRUNCATE TABLE vendor_details")

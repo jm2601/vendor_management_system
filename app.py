@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="Vendor Management System",
     page_icon="🏗️",
     layout="wide",
-    initial_sidebar_state="collapsed"  # Starts with sidebar collapsed
+    initial_sidebar_state="expanded"  # Starts with sidebar expanded
 )
 
 # Hide the default sidebar completely
