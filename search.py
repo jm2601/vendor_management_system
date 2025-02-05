@@ -24,7 +24,8 @@ def get_db_connection():
         sslmode="require"
     )
 
-# Define the drop-down options for Division and Trade filtering
+# -------------------- Filter Options --------------------
+# Division drop-down options
 division_options = [
     "All",
     "01 - General Conditions",
@@ -134,13 +135,13 @@ trade_mapping = {
         "Gypcrete"
     ],
     "04 - Masonry": [
-        "Masonry"
+        "Masonry" # Only one trade
     ],
     "05 - Metals": [
         "Structural Steel/Fab",
         "Metal Decking"
     ],
-    "06 - Wood, Plastics,  Composites": [
+    "06 - Wood, Plastics, Composites": [
         "Rough Framing",
         "Finish Carpentry/Casework"
     ],
@@ -184,28 +185,28 @@ trade_mapping = {
         "Solid Surface Countertops"
     ],
     "13 - Special Construction": [
-        "Pool Construction"
+        "Pool Construction" # Only one trade
     ],
     "14 - Conveying Equipment": [
-        "Elevators"
+        "Elevators" # Only one trade
     ],
     "21 - Fire Suppression": [
-        "Fire Sprinklers"
+        "Fire Sprinklers" # Only one trade
     ],
     "22 - Plumbing": [
-        "Plumbing"
+        "Plumbing" # Only one trade
     ],
     "23 - HVAC": [
-        "HVAC"
+        "HVAC" # Only one trade
     ],
     "26 - Electrical": [
-        "Electrical"
+        "Electrical" # Only one trade
     ],
     "27 - Communications / 28 - Electronic Safety & Security": [
-        "Low Voltage/Security/Fire Alarm"
+        "Low Voltage/Security/Fire Alarm" # Only one trade
     ],
     "31 - Earthwork": [
-        "Grading/Paving"
+        "Grading/Paving" # Only one trade
     ],
     "32 - Exterior Improvements": [
         "Striping",
@@ -215,7 +216,7 @@ trade_mapping = {
         "Court Surfacing"
     ],
     "33 - Utilities": [
-        "Underground Utilities"
+        "Underground Utilities" # Only one trade
     ]
 }
 
@@ -225,33 +226,40 @@ def search_page():
     # --- Sidebar Filters ---
     st.sidebar.header("Filter Vendor Details")
     
-    # Division filter drop-down with fixed options
+    # Division filter drop-down
     division_filter = st.sidebar.selectbox("Division", options=division_options, index=0)
     
     # Auto-adjust Trade filter based on Division selection:
     if division_filter in trade_mapping:
-        trade_options = ["All"] + trade_mapping[division_filter]
+        # If only one trade mapped, use that list without "All"
+        if len(trade_mapping[division_filter]) == 1:
+            trade_options = trade_mapping[division_filter]
+        else:
+            trade_options = ["All"] + trade_mapping[division_filter]
     else:
         trade_options = ["All"] + full_trade_list
     
     trade_filter = st.sidebar.selectbox("Trade", options=trade_options, index=0)
     
-    # Text input for company (DBA) filter
+    # Company (DBA) filter text input
     company_filter = st.sidebar.text_input("Company (DBA)")
     
-    # Checkboxes for DIR and CA License filters:
+    # Checkboxes for DIR and CA License filters
     filter_dir = st.sidebar.checkbox("Only show vendors with DIR number")
     filter_ca = st.sidebar.checkbox("Only show vendors with CA license")
+
+    # Reset filters button
+    if st.sidebar.button("Reset Filters"):
+        st.experimental_rerun()
     
     # --- Main Search Input ---
-    # Fuzzy match on vendor legal name (from the vendors table)
     search_term = st.text_input("Search Vendor Name", placeholder="Start typing vendor name...")
     
     if search_term:
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Retrieve vendor names from vendors table for fuzzy matching
+        # Retrieve distinct vendor names for fuzzy matching
         cursor.execute("SELECT DISTINCT vendor_name FROM vendors")
         all_vendors = [row[0] for row in cursor.fetchall()]
         matched_vendors = process.extractBests(search_term, all_vendors, score_cutoff=60)
@@ -259,8 +267,7 @@ def search_page():
         if matched_vendors:
             selected_vendor = st.selectbox("Select vendor:", [v[0] for v in matched_vendors])
             
-            # Build a query that joins vendors with vendor_details.
-            # The join condition assumes that vendors.vendor_name matches vendor_details.company_dba.
+            # Build query joining vendors with vendor_details (using company_dba)
             query = """
                 SELECT v.vendor_name, 
                        v.certificate, 
@@ -285,7 +292,7 @@ def search_page():
                 WHERE v.vendor_name = %s
             """
             params = [selected_vendor]
-            # Apply additional filters from the sidebar:
+            # Append filters if specified
             if division_filter != "All":
                 query += " AND d.division = %s"
                 params.append(division_filter)
@@ -304,44 +311,35 @@ def search_page():
             vendor_data = cursor.fetchone()
             
             if vendor_data:
-                # Map query results to a dictionary using column names
                 cols = [desc[0] for desc in cursor.description]
                 vendor_dict = dict(zip(cols, vendor_data))
                 
                 # --- Process Certificate Data ---
-                # Flatten the certificate and expirations arrays
                 flat_certificates = flatten_list(vendor_dict.get("certificate", []))
                 flat_expirations = flatten_list(vendor_dict.get("expirations_all", []))
-                # Create pairs of (certificate, expiration)
                 cert_exp_pairs = list(zip(flat_certificates, flat_expirations))
                 if cert_exp_pairs:
-                    # Sort the pairs by expiration date
                     cert_exp_pairs.sort(key=lambda x: x[1])
                     soonest_date = cert_exp_pairs[0][1]
-                    # Only include certificates that expire on the soonest date
                     soonest_certs = [cert for cert, exp in cert_exp_pairs if exp == soonest_date]
                 else:
                     soonest_date, soonest_certs = None, []
                 days_left = (soonest_date - date.today()).days if soonest_date else None
                 
-                # Flatten expired certificates array
                 flat_expired = flatten_list(vendor_dict.get("certs_expired", []))
                 
-                # --- Display the Vendor Details ---
+                # --- Display Vendor Details ---
                 with st.expander(f"{vendor_dict['vendor_name']}", expanded=True):
-                    # Display approval status
                     if vendor_dict['approved']:
                         st.success("Vendor is Approved ✅")
                     else:
                         st.error("Vendor is Not Approved ❌")
                     
-                    # Display contact details (including email from vendor_details)
                     st.subheader("Contact Details")
                     st.write(f"Contact: {vendor_dict.get('contact', 'N/A')}")
                     st.write(f"Phone: {vendor_dict.get('phone', 'N/A')}")
                     st.write(f"E-mail: {vendor_dict.get('email', 'N/A')}")
                     
-                    # Display current certificates
                     st.subheader("Certificates")
                     st.write("Current Certificates:")
                     if flat_certificates:
@@ -349,14 +347,12 @@ def search_page():
                     else:
                         st.write("No valid certificates.")
                     
-                    # Display expired certificates
                     st.write("Expired Certificates:")
                     if flat_expired:
                         st.code(flat_expired)
                     else:
                         st.write("No expired certificates.")
                     
-                    # Display expiration details (only the certificate(s) expiring on the soonest date)
                     st.subheader("Expiration")
                     if soonest_date:
                         st.write(f"**Earliest Expiring Certificate(s) on {soonest_date}:**")
