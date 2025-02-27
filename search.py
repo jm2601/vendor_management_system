@@ -1,19 +1,9 @@
 import streamlit as st
 import psycopg2
-from fuzzywuzzy import process
 from datetime import date
+import re
 
-# Helper function to flatten a list one level
-def flatten_list(nested):
-    flat = []
-    for item in nested:
-        if isinstance(item, list):
-            flat.extend(item)
-        else:
-            flat.append(item)
-    return flat
-
-# Get a database connection using credentials from st.secrets
+# --- Helper Functions ---
 def get_db_connection():
     return psycopg2.connect(
         dbname=st.secrets["DB_NAME"],
@@ -24,8 +14,122 @@ def get_db_connection():
         sslmode="require"
     )
 
+# ADD THIS NEW FUNCTION
+def create_normalize_function(conn):
+    """Create the normalize_company SQL function if it doesn't exist"""
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE OR REPLACE FUNCTION normalize_company(name TEXT)
+            RETURNS TEXT AS $$
+            BEGIN
+                RETURN 
+                    replace(replace(replace(replace(replace(replace(replace(replace(replace(
+                        regexp_replace(upper(trim(name)), '[,. -]', '', 'g'),
+                        ' INC', ''),
+                        ' LLC', ''),
+                        ' LIMITED', ''),
+                        ' CORP', ''),
+                        ' CORPORATION', ''),
+                        ' COMPANY', ''),
+                        ' LP', ''),
+                        ' PARTNERS', ''),
+                        ' PLC', '');
+            END;
+            $$ LANGUAGE plpgsql IMMUTABLE;
+        """)
+        conn.commit()
+    except Exception as e:
+        if "already exists" not in str(e):
+            raise e
+        
+def flatten_list(nested):
+    """Flatten a list one level."""
+    flat = []
+    for item in nested:
+        if isinstance(item, list):
+            flat.extend(item)
+        else:
+            flat.append(item)
+    return flat
+
+def merge_vendor_records(vendor_records):
+    """Merge multiple database records into a single vendor entry."""
+    merged = {}
+    for record in vendor_records:
+        # Handle None values
+        record['certificate'] = record.get('certificate') or []
+        record['expirations_all'] = record.get('expirations_all') or []
+        record['certs_expired'] = record.get('certs_expired') or []
+        # Get the primary key (normalized name)
+        name_key = normalize_company(record.get('vendor_name') or record.get('company_dba') or "")
+        
+        if not name_key:
+            continue
+            
+        if name_key not in merged:
+            merged[name_key] = {
+                'vendor_name': record.get('vendor_name') or '',
+                'company_dba': record.get('company_dba') or '',
+                'certificate': flatten_list(record.get('certificate', [])) or [],
+                'expirations_all': flatten_list(record.get('expirations_all', [])) or [],
+                'certs_expired': flatten_list(record.get('certs_expired', [])),
+                'approved': record.get('approved', False),
+                'soon_to_expire': record.get('soon_to_expire'),
+                'contact': record.get('contact'),
+                'phone': record.get('phone'),
+                'division': record.get('division'),
+                'trade': record.get('trade'),
+                'contact_name': record.get('contact_name'),
+                'cell_number': record.get('cell_number'),
+                'office_number': record.get('office_number'),
+                'email': record.get('email'),
+                'address': record.get('address'),
+                'ca_license': record.get('ca_license'),
+                'dir_number': record.get('dir_number'),
+                'dvbe': record.get('dvbe')
+            }
+        else:
+            # Merge certificates and expirations
+            merged[name_key]['certificate'] = list(set(
+                merged[name_key]['certificate'] + 
+                flatten_list(record.get('certificate', []))
+            ))
+            merged[name_key]['expirations_all'] = list(set(
+                merged[name_key]['expirations_all'] + 
+                flatten_list(record.get('expirations_all', []))
+            ))
+            merged[name_key]['certs_expired'] = list(set(
+                merged[name_key]['certs_expired'] + 
+                flatten_list(record.get('certs_expired', []))
+            ))
+            
+            # Merge approval status
+            merged[name_key]['approved'] = merged[name_key]['approved'] or record.get('approved', False)
+            
+            # Prefer non-empty values from vendor_details
+            for field in ['contact', 'phone', 'division', 'trade', 
+                         'contact_name', 'cell_number', 'office_number',
+                         'email', 'address', 'ca_license', 'dir_number', 'dvbe']:
+                if not merged[name_key].get(field) and record.get(field):
+                    merged[name_key][field] = record.get(field)
+                    
+    return list(merged.values())
+
+def normalize_company(name):
+    """Normalize company names for matching."""
+    if not name:
+        return ""
+    norm = str(name).strip().upper()
+    norm = re.sub(r'[,\.\-]', '', norm)
+    for suffix in [" INC", " LLC", " LIMITED", " CORP", " CORPORATION", 
+                  " COMPANY", " LP", " PARTNERS", " PLC"]:
+        if norm.endswith(suffix):
+            norm = norm[:-len(suffix)]
+    return norm.strip()
+
 # -------------------- Filter Options --------------------
-# Division drop-down options
+
 division_options = [
     "All",
     "01 - General Conditions",
@@ -52,7 +156,6 @@ division_options = [
     "33 - Utilities"
 ]
 
-# Full list of trade options (if no division-specific mapping applies)
 full_trade_list = [
     "Surveying/Staking",
     "Energy Design",
@@ -114,7 +217,6 @@ full_trade_list = [
     "Underground Utilities"
 ]
 
-# Mapping for Division-specific Trade options.
 trade_mapping = {
     "01 - General Conditions": [
         "Surveying/Staking",
@@ -135,7 +237,7 @@ trade_mapping = {
         "Gypcrete"
     ],
     "04 - Masonry": [
-        "Masonry" # Only one trade
+        "Masonry"
     ],
     "05 - Metals": [
         "Structural Steel/Fab",
@@ -185,28 +287,28 @@ trade_mapping = {
         "Solid Surface Countertops"
     ],
     "13 - Special Construction": [
-        "Pool Construction" # Only one trade
+        "Pool Construction"
     ],
     "14 - Conveying Equipment": [
-        "Elevators" # Only one trade
+        "Elevators"
     ],
     "21 - Fire Suppression": [
-        "Fire Sprinklers" # Only one trade
+        "Fire Sprinklers"
     ],
     "22 - Plumbing": [
-        "Plumbing" # Only one trade
+        "Plumbing"
     ],
     "23 - HVAC": [
-        "HVAC" # Only one trade
+        "HVAC"
     ],
     "26 - Electrical": [
-        "Electrical" # Only one trade
+        "Electrical"
     ],
     "27 - Communications / 28 - Electronic Safety & Security": [
-        "Low Voltage/Security/Fire Alarm" # Only one trade
+        "Low Voltage/Security/Fire Alarm"
     ],
     "31 - Earthwork": [
-        "Grading/Paving" # Only one trade
+        "Grading/Paving"
     ],
     "32 - Exterior Improvements": [
         "Striping",
@@ -216,157 +318,173 @@ trade_mapping = {
         "Court Surfacing"
     ],
     "33 - Utilities": [
-        "Underground Utilities" # Only one trade
+        "Underground Utilities"
     ]
 }
 
+# -------------------- Main Search Page --------------------
 def search_page():
+    # Initialize normalization function ONCE
+    if 'normalize_created' not in st.session_state:
+        conn = get_db_connection()
+        create_normalize_function(conn)
+        conn.close()
+        st.session_state.normalize_created = True
+
+    # After normalization
+   # duplicates = df[df.duplicated(subset=['company_dba'])]
+  #  if not duplicates.empty:
+   #     st.warning(f"Found {len(duplicates)} duplicates - keeping first occurrence")
+   #     df = df.drop_duplicates(subset=['company_dba'], keep='first')
+    
     st.title("Vendor Search")
     
     # --- Sidebar Filters ---
     st.sidebar.header("Filter Vendor Details")
-    
-    # Division filter drop-down
-    division_filter = st.sidebar.selectbox("Division", options=division_options, index=0)
-    
-    # Auto-adjust Trade filter based on Division selection:
+    division_filter = st.sidebar.selectbox("Division", options=division_options, index=0, key="division_filter")
     if division_filter in trade_mapping:
-        # If only one trade mapped, use that list without "All"
-        if len(trade_mapping[division_filter]) == 1:
-            trade_options = trade_mapping[division_filter]
-        else:
-            trade_options = ["All"] + trade_mapping[division_filter]
+        trade_options = ["All"] + trade_mapping[division_filter]
     else:
         trade_options = ["All"] + full_trade_list
+    trade_filter = st.sidebar.selectbox("Trade", options=trade_options, index=0, key="trade_filter")
+    filter_dir = st.sidebar.checkbox("Only show vendors with DIR number", key="filter_dir")
+    filter_ca = st.sidebar.checkbox("Only show vendors with CA license", key="filter_ca")
     
-    trade_filter = st.sidebar.selectbox("Trade", options=trade_options, index=0)
+    # --- Search Input ---
+    raw_search = st.text_input("Search Vendor Name (Legal or DBA)", 
+                              placeholder="Type vendor name...", 
+                              key="raw_search")
     
-    # Company (DBA) filter text input
-    company_filter = st.sidebar.text_input("Company (DBA)")
+    # Normalize search term
+    normalized_search = normalize_company(raw_search)
+    effective_search = f"%{normalized_search}%" if normalized_search else "%"
     
-    # Checkboxes for DIR and CA License filters
-    filter_dir = st.sidebar.checkbox("Only show vendors with DIR number")
-    filter_ca = st.sidebar.checkbox("Only show vendors with CA license")
-
-    # Reset filters button
-    if st.sidebar.button("Reset Filters"):
-        st.experimental_rerun()
+    # Build query
+    query = """
+        SELECT 
+            v.vendor_name,
+            v.certificate,
+            v.expires,
+            v.vendor_type,
+            v.contact,
+            v.phone,
+            v.certs_expired,
+            v.approved,
+            v.soon_to_expire,
+            v.expirations_all,
+            vd.division,
+            vd.trade,
+            vd.company_dba,
+            vd.contact_name,
+            vd.cell_number,
+            vd.office_number,
+            vd.email,
+            vd.address,
+            vd.ca_license,
+            vd.dir_number,
+            vd.dvbe
+        FROM vendors v
+        FULL JOIN vendor_details vd 
+            ON normalize_company(v.vendor_name) = normalize_company(vd.company_dba)
+        WHERE 
+            (normalize_company(v.vendor_name) ILIKE %s OR
+            normalize_company(vd.company_dba) ILIKE %s)
+    """
+    params = [effective_search, effective_search]
     
-    # --- Main Search Input ---
-    search_term = st.text_input("Search Vendor Name", placeholder="Start typing vendor name...")
+    # Add filters
+    if division_filter != "All":
+        query += " AND vd.division ILIKE %s"
+        params.append(f"%{division_filter}%")
+    if trade_filter != "All":
+        query += " AND vd.trade ILIKE %s"
+        params.append(f"%{trade_filter}%")
+    if filter_dir:
+        query += " AND (vd.dir_number IS NOT NULL AND vd.dir_number <> '')"
+    if filter_ca:
+        query += " AND (vd.ca_license IS NOT NULL AND vd.ca_license <> '')"
     
-    if search_term:
+    if st.button("Search") or normalized_search:
         conn = get_db_connection()
-        cursor = conn.cursor()
-        
-        # Retrieve distinct vendor names for fuzzy matching
-        cursor.execute("SELECT DISTINCT vendor_name FROM vendors")
-        all_vendors = [row[0] for row in cursor.fetchall()]
-        matched_vendors = process.extractBests(search_term, all_vendors, score_cutoff=60)
-        
-        if matched_vendors:
-            selected_vendor = st.selectbox("Select vendor:", [v[0] for v in matched_vendors])
-            
-            # Build query joining vendors with vendor_details (using company_dba)
-            query = """
-                SELECT v.vendor_name, 
-                       v.certificate, 
-                       v.expirations_all,
-                       v.approved, 
-                       v.contact, 
-                       v.phone, 
-                       v.soon_to_expire,
-                       v.certs_expired,
-                       d.division,
-                       d.trade,
-                       d.company_dba,
-                       d.contact_name,
-                       d.cell_number,
-                       d.office_number,
-                       d.email,
-                       d.address,
-                       d.ca_license,
-                       d.dir_number
-                FROM vendors v
-                LEFT JOIN vendor_details d ON v.vendor_name = d.company_dba
-                WHERE v.vendor_name = %s
-            """
-            params = [selected_vendor]
-            # Append filters if specified
-            if division_filter != "All":
-                query += " AND d.division = %s"
-                params.append(division_filter)
-            if trade_filter != "All":
-                query += " AND d.trade ILIKE %s"
-                params.append("%" + trade_filter + "%")
-            if company_filter:
-                query += " AND d.company_dba ILIKE %s"
-                params.append("%" + company_filter + "%")
-            if filter_dir:
-                query += " AND d.dir_number IS NOT NULL AND d.dir_number <> ''"
-            if filter_ca:
-                query += " AND d.ca_license IS NOT NULL AND d.ca_license <> ''"
-            
+        try:
+            cursor = conn.cursor()
             cursor.execute(query, tuple(params))
-            vendor_data = cursor.fetchone()
+            results = cursor.fetchall()
             
-            if vendor_data:
+            if results:
                 cols = [desc[0] for desc in cursor.description]
-                vendor_dict = dict(zip(cols, vendor_data))
+                vendor_records = [dict(zip(cols, row)) for row in results]
                 
-                # --- Process Certificate Data ---
-                flat_certificates = flatten_list(vendor_dict.get("certificate", []))
-                flat_expirations = flatten_list(vendor_dict.get("expirations_all", []))
-                cert_exp_pairs = list(zip(flat_certificates, flat_expirations))
-                if cert_exp_pairs:
-                    cert_exp_pairs.sort(key=lambda x: x[1])
-                    soonest_date = cert_exp_pairs[0][1]
-                    soonest_certs = [cert for cert, exp in cert_exp_pairs if exp == soonest_date]
-                else:
-                    soonest_date, soonest_certs = None, []
-                days_left = (soonest_date - date.today()).days if soonest_date else None
+                # Merge records from both tables
+                merged_vendors = merge_vendor_records(vendor_records)
                 
-                flat_expired = flatten_list(vendor_dict.get("certs_expired", []))
-                
-                # --- Display Vendor Details ---
-                with st.expander(f"{vendor_dict['vendor_name']}", expanded=True):
-                    if vendor_dict['approved']:
-                        st.success("Vendor is Approved ✅")
-                    else:
-                        st.error("Vendor is Not Approved ❌")
+                # Display results
+                for vendor in merged_vendors:
+                    # Calculate expiration info
+                    cert_exp_pairs = sorted(
+                        zip(vendor['certificate'], vendor['expirations_all']),
+                        key=lambda x: x[1]
+                    ) if vendor.get('expirations_all') else []
                     
-                    st.subheader("Contact Details")
-                    st.write(f"Contact: {vendor_dict.get('contact', 'N/A')}")
-                    st.write(f"Phone: {vendor_dict.get('phone', 'N/A')}")
-                    st.write(f"E-mail: {vendor_dict.get('email', 'N/A')}")
-                    
-                    st.subheader("Certificates")
-                    st.write("Current Certificates:")
-                    if flat_certificates:
-                        st.code(flat_certificates)
-                    else:
-                        st.write("No valid certificates.")
-                    
-                    st.write("Expired Certificates:")
-                    if flat_expired:
-                        st.code(flat_expired)
-                    else:
-                        st.write("No expired certificates.")
-                    
-                    st.subheader("Expiration")
-                    if soonest_date:
-                        st.write(f"**Earliest Expiring Certificate(s) on {soonest_date}:**")
-                        st.write(soonest_certs)
-                        if days_left is not None and 0 <= days_left <= 30:
-                            st.write(f"Certificate expires in {days_left} days")
-                    else:
-                        st.write("No certificates nearing expiration.")
+                    with st.expander(f"{vendor.get('vendor_name') or vendor.get('company_dba')}", expanded=False):
+                        # Approval status
+                        if vendor.get('approved'):
+                            st.success("✅ Approved Vendor")
+                        else:
+                            st.error("❌ Not Approved - Missing Certificates")
+                        
+                        # Contact Information
+                        st.subheader("Contact Details")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Primary Contact:** {vendor.get('contact') or 'N/A'}")
+                            st.write(f"**Phone:** {vendor.get('phone') or 'N/A'}")
+                            st.write(f"**Email:** {vendor.get('email') or 'N/A'}")
+                        with col2:
+                            st.write(f"**Secondary Contact:** {vendor.get('contact_name') or 'N/A'}")
+                            st.write(f"**Cell:** {vendor.get('cell_number') or 'N/A'}")
+                            st.write(f"**Office:** {vendor.get('office_number') or 'N/A'}")
+                        
+                        # Company Info
+                        st.subheader("Company Information")
+                        st.write(f"**Address:** {vendor.get('address') or 'N/A'}")
+                        st.write(f"**CA License:** {vendor.get('ca_license') or 'N/A'}")
+                        st.write(f"**DIR Number:** {vendor.get('dir_number') or 'N/A'}")
+                        
+                        # Certificates
+                        st.subheader("Certificates")
+                        if vendor['certificate']:
+                            cols = st.columns(2)
+                            with cols[0]:
+                                st.write("**Valid Certificates:**")
+                                st.write("\n".join([f"- {cert}" for cert in vendor['certificate']]))
+                            with cols[1]:
+                                # MODIFY THIS SECTION
+                                cert_exp_pairs = sorted(
+                                    zip(vendor['certificate'], vendor['expirations_all']),
+                                    key=lambda x: x[1]
+                                ) if vendor.get('expirations_all') and vendor['certificate'] else []  # ← Changed line
+
+                                if cert_exp_pairs:
+                                    soonest_date = cert_exp_pairs[0][1]
+                                    st.write(f"**Earliest Expiration:** {soonest_date.strftime('%Y-%m-%d')}")
+                                    days_left = (soonest_date - date.today()).days
+                                    if days_left <= 30:
+                                        st.warning(f"Expires in {days_left} days")
+                        else:
+                            st.write("No valid certificates found")
+                        
+                        # Expired Certificates
+                        if vendor['certs_expired']:
+                            st.write("**Expired Certificates:**")
+                            st.write("\n".join([f"- {cert}" for cert in vendor['certs_expired']]))
             else:
-                st.warning("No vendor data found for the selected vendor.")
-        else:
-            st.warning("No matching vendors found")
-        
-        conn.close()
+                st.warning("No vendors found matching the search criteria")
+                
+        except Exception as e:
+            st.error(f"Database error: {str(e)}")
+        finally:
+            conn.close()
 
 if __name__ == "__main__":
     search_page()

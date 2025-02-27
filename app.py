@@ -3,23 +3,13 @@ from search import search_page
 from upload import upload_page
 from view_data import view_data_page
 
-
 # Configure page
 st.set_page_config(
     page_title="Vendor Management System",
     page_icon="🏗️",
     layout="wide",
-    initial_sidebar_state="expanded"  # Starts with sidebar expanded
+    initial_sidebar_state="expanded"  # sidebar expanded for demo
 )
-
-# Hide the default sidebar completely
-# st.markdown("""
-#    <style>
-#        section[data-testid="stSidebar"] {
-#            display: none;
-#        }
-#    </style>
-#    """, unsafe_allow_html=True)
 
 # Horizontal navigation buttons
 def create_horizontal_nav():
@@ -34,15 +24,13 @@ def create_horizontal_nav():
         if st.button("📊 View All Data"):
             st.session_state.current_page = "view_data"
 
-# Initialize session state
+# Initialize session state if not already set
 if "current_page" not in st.session_state:
     st.session_state.current_page = "search"
 
-# Create navigation and page content
+# Create navigation and display selected page
 create_horizontal_nav()
-st.write("---")  # Horizontal line separator
-
-# Display selected page
+st.write("---")
 if st.session_state.current_page == "search":
     search_page()
 elif st.session_state.current_page == "upload":

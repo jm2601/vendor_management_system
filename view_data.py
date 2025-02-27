@@ -5,7 +5,6 @@ from sqlalchemy import create_engine
 def view_data_page():
     st.title("View Vendor Data")
     
-    # Create SQLAlchemy engine using st.secrets
     engine = create_engine(
         f"postgresql://{st.secrets['DB_USER']}:{st.secrets['DB_PASSWORD']}@"
         f"{st.secrets['DB_HOST']}:{st.secrets['DB_PORT']}/{st.secrets['DB_NAME']}"
@@ -14,12 +13,10 @@ def view_data_page():
     
     try:
         with engine.connect() as conn:
-            # Query vendors table
             df_vendors = pd.read_sql("SELECT * FROM vendors", conn)
-            # Query vendor_details table
             df_details = pd.read_sql("SELECT * FROM vendor_details", conn)
             
-        st.subheader("Vendors Table")
+        st.subheader("Vendors Table (Sage Data)")
         if not df_vendors.empty:
             st.dataframe(df_vendors, use_container_width=True)
         else:

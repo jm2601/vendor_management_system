@@ -22,7 +22,19 @@ def get_db_connection():
         sslmode="require"
     )
 
-# Process raw CSV data for vendors (as before)
+def normalize_company(name):
+    """Normalize company names for consistent matching"""
+    if not name:
+        return ""
+    norm = str(name).strip().upper()
+    norm = re.sub(r'[,\.\-]', '', norm)
+    for suffix in [" INC", " LLC", " LIMITED", " CORP", " CORPORATION", 
+                  " COMPANY", " LP", " PARTNERS", " PLC"]:
+        if norm.endswith(suffix):
+            norm = norm[:-len(suffix)]
+    return norm.strip()
+
+# -------------------- Sage Vendors Processing --------------------
 def process_raw_data(raw_df):
     formatted_data = pd.DataFrame(columns=headers)
     current_vendor = None
@@ -33,25 +45,27 @@ def process_raw_data(raw_df):
     for index, row in raw_df.iterrows():
         row_values = row.dropna().values
         if len(row_values) > 0:
-            # Detect vendor type
+            # Extract vendor type
             vendor_type = extract_vendor_type(' '.join(map(str, row_values)))
             if vendor_type is not None:
                 current_type = vendor_type
                 continue
-            # Detect vendor name and contact info
+            
+            # Vendor row detection
             if re.match(r'\d+', str(row_values[0])) and len(row_values) > 1:
-                current_vendor = row_values[1]
+                current_vendor = normalize_company(row_values[1])  # Normalize here
                 current_contact = row_values[2] if len(row_values) > 2 else None
                 current_phone = row_values[3] if len(row_values) > 3 else None
                 continue
-            # Detect certificate rows
+            
+            # Certificate detection
             if is_certificate(row_values[0]):
                 certificate = row_values[0]
                 project = row_values[1] if len(row_values) > 1 else '0'
                 expires = row_values[2] if len(row_values) > 2 else None
                 formatted_data = pd.concat([formatted_data, pd.DataFrame({
                     'vendor_type': [current_type],
-                    'vendor_name': [current_vendor],
+                    'vendor_name': [current_vendor],  # Already normalized
                     'certificate': [certificate],
                     'blanket_project': [project],
                     'expires': [expires],
@@ -60,43 +74,52 @@ def process_raw_data(raw_df):
                 })], ignore_index=True)
     return formatted_data
 
-# Upload vendors data section
 def upload_vendors_page():
-    st.title("Upload Vendors Data")
-    uploaded_file = st.file_uploader("Upload vendors CSV", type=["csv"], key="vendors_upload")
+    st.title("Upload Sage Vendors Data")
+    uploaded_file = st.file_uploader("Upload Sage CSV", type=["csv"], key="vendors_upload")
+    
     if uploaded_file:
-        with st.spinner("Processing vendors data..."):
+        with st.spinner("Processing Sage data..."):
             try:
                 raw_df = pd.read_csv(uploaded_file, header=None)
                 formatted_data = process_raw_data(raw_df)
                 filtered_data = filter_no_project_certificates(formatted_data)
                 processed_data = collate_certificates_and_approve(filtered_data)
-                processed_data = processed_data.drop(columns=['blanket_project'], errors='ignore')
-                # Convert arrays to PostgreSQL array literal strings
+                
+                # Convert lists to PostgreSQL arrays
                 processed_data['certificate'] = processed_data['certificate'].apply(
-                    lambda x: "{" + ", ".join(map(str, x)) + "}" if len(x) > 0 else "{}"
+                    lambda x: "{" + ", ".join(map(str, x)) + "}" if x else "{}"
                 )
                 processed_data['certs_expired'] = processed_data['certs_expired'].apply(
-                    lambda x: "{" + ", ".join(map(str, x)) + "}" if len(x) > 0 else "{}"
+                    lambda x: "{" + ", ".join(map(str, x)) + "}" if x else "{}"
                 )
                 processed_data['expirations_all'] = processed_data['expirations_all'].apply(
-                    lambda x: "{" + ", ".join([d.strftime("%Y-%m-%d") for d in x]) + "}" if len(x) > 0 else "{}"
+                    lambda x: "{" + ", ".join([d.strftime("%Y-%m-%d") for d in x]) + "}" if x else "{}"
                 )
+                processed_data['soon_to_expire'] = processed_data['soon_to_expire'].apply(
+                    lambda x: None if x is None else max(min(int(x), 2147483647), -2147483648)
+                )
+
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                cursor.execute("TRUNCATE TABLE vendors")
-                processed_data['soon_to_expire'] = (
-                    processed_data['soon_to_expire']
-                    .astype(float)
-                    .replace({np.nan: None})
-                    .astype(object)
-                    .clip(lower=-2147483648, upper=2147483647)
-                )
+                
+                # Upsert logic for vendors table
                 for _, row in processed_data.iterrows():
                     cursor.execute("""
                         INSERT INTO vendors 
-                        (vendor_name, certificate, expires, vendor_type, contact, phone, certs_expired, approved, soon_to_expire, expirations_all)
+                        (vendor_name, certificate, expires, vendor_type, contact, phone, 
+                         certs_expired, approved, soon_to_expire, expirations_all)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (vendor_name) DO UPDATE SET
+                            certificate = EXCLUDED.certificate,
+                            expires = EXCLUDED.expires,
+                            vendor_type = EXCLUDED.vendor_type,
+                            contact = EXCLUDED.contact,
+                            phone = EXCLUDED.phone,
+                            certs_expired = EXCLUDED.certs_expired,
+                            approved = EXCLUDED.approved,
+                            soon_to_expire = EXCLUDED.soon_to_expire,
+                            expirations_all = EXCLUDED.expirations_all
                     """, (
                         row['vendor_name'],
                         row['certificate'],
@@ -109,79 +132,91 @@ def upload_vendors_page():
                         row['soon_to_expire'],
                         row['expirations_all']
                     ))
+                
                 conn.commit()
-                st.success("✅ Vendors data uploaded successfully!")
+                st.success("✅ Sage vendors data processed successfully!")
                 st.balloons()
             except Exception as e:
-                st.error(f"❌ Error processing vendors file: {str(e)}")
+                st.error(f"❌ Error processing Sage file: {str(e)}")
             finally:
                 if 'conn' in locals():
                     conn.close()
 
-# Upload vendor details data section
+# -------------------- Vendor Details Processing --------------------
 def upload_vendor_details_page():
-    st.title("Upload Vendor Details Data")
-    st.write("Upload an Excel or CSV file with the following columns:")
-    st.write("Division, Trade, Company, Contact Name, Cell Number, Office Number, E-mail, Address, CA Lic., DIR No.")
-    uploaded_file = st.file_uploader("Upload Vendor Details", type=["csv", "xlsx"], key="vendor_details_upload")
+    st.title("Upload Vendor Details")
+    st.write("Upload file with columns: Division, Trade, Company, Contact Name, Cell, Office, Email, Address, CA Lic., DIR No., DVBE")
+    
+    uploaded_file = st.file_uploader("Choose file", type=["csv", "xlsx"], key="vendor_details_upload")
     if uploaded_file:
-        with st.spinner("Processing vendor details data..."):
+        with st.spinner("Processing details..."):
             try:
-                # Use skiprows=2 to skip the top two rows of the file
+                # Read file
                 if uploaded_file.name.endswith('.csv'):
-                    df = pd.read_csv(uploaded_file, skiprows=2)
+                    df = pd.read_csv(uploaded_file)
                 else:
-                    df = pd.read_excel(uploaded_file, skiprows=2)
-                # Rename columns to lower-case names matching the vendor_details table
+                    df = pd.read_excel(uploaded_file)
+                
+                # Clean and normalize
                 df = df.rename(columns={
-                    'Division': 'division',
-                    'Trade': 'trade',
                     'Company': 'company_dba',
-                    'Contact Name': 'contact_name',
-                    'Cell Number': 'cell_number',
-                    'Office Number': 'office_number',
-                    'E-mail': 'email',
-                    'Address': 'address',
                     'CA Lic.': 'ca_license',
                     'DIR No.': 'dir_number'
-                })
-                # Replace empty strings with NA and drop rows that are completely NA
-                df = df.replace(r'^\s*$', pd.NA, regex=True).dropna(how='all')
-
+                }).dropna(how='all')
+                
+                df['company_dba'] = df['company_dba'].astype(str).apply(normalize_company)
+                
+                # Clean phone numbers
+                phone_cols = ['Cell', 'Office']
+                for col in phone_cols:
+                    if col in df.columns:
+                        df[col] = df[col].astype(str).str.replace(r'\D', '', regex=True)
+                        df[col] = df[col].apply(lambda x: x if x.isdigit() and len(x) == 10 else None)
+                
                 conn = get_db_connection()
                 cursor = conn.cursor()
-                cursor.execute("TRUNCATE TABLE vendor_details")
+                
+                # Add before the upsert loop
+                df = df.drop_duplicates(subset=['company_dba'], keep='first')
+
+                # Upsert logic for vendor_details
                 for _, row in df.iterrows():
                     cursor.execute("""
                         INSERT INTO vendor_details 
-                        (division, trade, company_dba, contact_name, cell_number, office_number, email, address, ca_license, dir_number)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        row.get('division'),
-                        row.get('trade'),
-                        row.get('company_dba'),
-                        row.get('contact_name'),
-                        row.get('cell_number'),
-                        row.get('office_number'),
-                        row.get('email'),
-                        row.get('address'),
-                        row.get('ca_license'),
-                        row.get('dir_number')
-                    ))
+                        (division, trade, company_dba, contact_name, cell_number, 
+                        office_number, email, address, ca_license, dir_number, dvbe)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (company_dba) DO UPDATE SET
+                            division = EXCLUDED.division,
+                            trade = EXCLUDED.trade,
+                            contact_name = EXCLUDED.contact_name,
+                            cell_number = EXCLUDED.cell_number,
+                            office_number = EXCLUDED.office_number,
+                            email = EXCLUDED.email,
+                            address = EXCLUDED.address,
+                            ca_license = EXCLUDED.ca_license,
+                            dir_number = EXCLUDED.dir_number,
+                            dvbe = EXCLUDED.dvbe
+                    """)
+                # Add validation check
+                st.write(f"Found {len(df)} unique vendor details to process")
+                if len(df) == 0:
+                    st.warning("No valid records found after deduplication")
+                    return
                 conn.commit()
-                st.success("✅ Vendor details uploaded successfully!")
+                st.success("✅ Vendor details updated successfully!")
             except Exception as e:
-                st.error(f"❌ Error processing vendor details file: {str(e)}")
+                st.error(f"❌ Error processing details: {str(e)}")
             finally:
                 if 'conn' in locals():
                     conn.close()
 
-# Main upload page that lets the user choose which data to upload
 def upload_page():
-    st.title("Upload Data")
-    st.write("Choose an option below:")
-    option = st.radio("Select upload type", ("Vendors Data", "Vendor Details Data"))
-    if option == "Vendors Data":
+    st.title("Data Upload Portal")
+    option = st.radio("Select data type:", 
+                     ("Sage Vendor Data", "Vendor Details"))
+    
+    if option == "Sage Vendor Data":
         upload_vendors_page()
     else:
         upload_vendor_details_page()

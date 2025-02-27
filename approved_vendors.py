@@ -2,7 +2,7 @@ import pandas as pd
 import re
 from datetime import datetime
 
-# Example headers and mappings – adjust as needed
+# Example headers and mappings – adjust as needed.
 headers = ['vendor_type', 'vendor_name', 'certificate', 'blanket_project', 'expires', 'contact', 'phone']
 
 vendor_type_mapping = {
@@ -45,7 +45,7 @@ def filter_no_project_certificates(data):
 
 def collate_certificates_and_approve(data):
     today = datetime.now()
-    # Group by vendor_name and aggregate values
+    # Group by vendor_name and aggregate values.
     grouped = data.groupby('vendor_name').agg({
         'certificate': lambda x: list(x),
         'expires': lambda x: list(x),
@@ -58,7 +58,7 @@ def collate_certificates_and_approve(data):
         certificates = row['certificate']
         expirations = row['expires']
         valid_certificates = []
-        valid_expirations = []  # NEW: store each certificate's expiration date
+        valid_expirations = []  # store each certificate's expiration date.
         expired_certificates = []
         soonest_expiration = None
 
@@ -80,18 +80,17 @@ def collate_certificates_and_approve(data):
             except ValueError:
                 expired_certificates.append(cert)
         row['certificate'] = valid_certificates
-        row['expirations_all'] = valid_expirations  # NEW column with full pairing
+        row['expirations_all'] = valid_expirations
         row['certs_expired'] = expired_certificates
         row['expires'] = soonest_expiration.strftime("%Y-%m-%d") if soonest_expiration else None
 
-        # Determine approval status using the required set
+        # Determine approval status.
         certs_set = set(map(str.strip, map(str.upper, valid_certificates)))
         row['approved'] = approval_certificates.issubset(certs_set)
         return row
 
     grouped = grouped.apply(process_certificates, axis=1)
-
-    # Add soon_to_expire column (if certificate expires within 30 days)
+    
     soon_to_expire = []
     for expires in grouped['expires']:
         try:
@@ -101,5 +100,5 @@ def collate_certificates_and_approve(data):
         except Exception:
             soon_to_expire.append(None)
     grouped['soon_to_expire'] = soon_to_expire
-
+    
     return grouped
